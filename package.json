@@ -1,6 +1,6 @@
 {
-  "name": "ansi-color-logger",
-  "version": "1.0.0",
+  "name": "ansi-js-logger",
+  "version": "1.0.1",
   "description": "Advanced logging system with ANSI color formatting support for console output",
   "main": "src/index.js",
   "type": "module",
