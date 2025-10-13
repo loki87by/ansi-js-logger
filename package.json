@@ -1,0 +1,39 @@
+{
+  "name": "ansi-color-logger",
+  "version": "1.0.0",
+  "description": "Advanced logging system with ANSI color formatting support for console output",
+  "main": "src/index.js",
+  "type": "module",
+  "keywords": [
+    "logger",
+    "ansi",
+    "colors",
+    "console",
+    "formatting",
+    "terminal",
+    "logging",
+    "color",
+    "styled"
+  ],
+  "author": "Alexey Akulich",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loki87by/ansi-js-logger"
+  },
+  "homepage": "https://github.com/loki87by/ansi-js-logger#readme",
+  "bugs": {
+    "url": "https://github.com/loki87by/ansi-js-logger/issues"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test.js"
+  }
+}
