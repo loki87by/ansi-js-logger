@@ -638,6 +638,94 @@ function prepareCustomLog(text = "", options = null) {
 }
 
 // =============================================================================
+// СИСТЕМА ПОДАВЛЕНИЯ ПОВТОРЯЮЩИХСЯ ЛОГОВ
+// =============================================================================
+
+// Хранилище последних логов
+let lastLogs = {
+  debug: { text: null, timestamp: 0 },
+  info: { text: null, timestamp: 0 },
+  warn: { text: null, timestamp: 0 },
+  error: { text: null, timestamp: 0 },
+  print: { text: null, timestamp: 0 },
+  custom: { text: null, timestamp: 0 },
+};
+
+// Конфигурация подавления
+const suppressionConfig = {
+  enabled: false,
+  timeout: 1000, // Время в ms, в течение которого логи считаются повторными
+  showCounter: true, // Показывать счетчик повторений
+};
+
+/**
+ * Включает/выключает подавление повторяющихся логов
+ * @param {Object} config - Конфигурация
+ * @param {boolean} [config.enabled=true] - Включить подавление
+ * @param {number} [config.timeout=1000] - Таймаут для определения повторов (ms)
+ * @param {boolean} [config.showCounter=true] - Показывать счетчик повторений
+ */
+export function configureLogSuppression(config = {}) {
+  suppressionConfig.enabled =
+    config.enabled !== undefined ? config.enabled : true;
+  suppressionConfig.timeout = config.timeout || 1000;
+  suppressionConfig.showCounter =
+    config.showCounter !== undefined ? config.showCounter : true;
+
+  // Сброс истории при изменении конфигурации
+  if (config.resetHistory) {
+    Object.keys(lastLogs).forEach((key) => {
+      lastLogs[key] = { text: null, timestamp: 0 };
+    });
+  }
+}
+
+// Счетчики повторений
+const repeatCounters = new Map();
+/**
+ * Проверяет, является ли лог повторением
+ * @param {string} type - Тип лога (debug, info, etc.)
+ * @param {string} text - Текст лога
+ * @returns {Object} {isRepeat: boolean, count: number}
+ */
+function checkIfRepeat(type, text) {
+  if (!suppressionConfig.enabled) {
+    return { isRepeat: false, count: 0 };
+  }
+
+  const now = Date.now();
+  const lastLog = lastLogs[type];
+
+  // Если тот же текст и не истек таймаут
+  if (
+    lastLog.text === text &&
+    now - lastLog.timestamp < suppressionConfig.timeout
+  ) {
+    const key = `${type}:${text}`;
+    const count = (repeatCounters.get(key) || 0) + 1;
+    repeatCounters.set(key, count);
+    return { isRepeat: true, count };
+  }
+
+  // Обновляем последний лог
+  lastLogs[type] = { text, timestamp: now };
+
+  // Сбрасываем счетчик для этого типа+текста
+  const key = `${type}:${text}`;
+  if (repeatCounters.has(key)) {
+    const oldCount = repeatCounters.get(key);
+    repeatCounters.delete(key);
+
+    // Если был предыдущий повтор, выводим счетчик
+    if (oldCount > 0 && suppressionConfig.showCounter) {
+      console.log(colorizeByText(`[Повторён ${oldCount} раз]`, "dim"));
+    }
+  }
+
+  return { isRepeat: false, count: 0 };
+}
+
+// =============================================================================
 // ПУБЛИЧНЫЙ API ЛОГГЕРА
 // =============================================================================
 
@@ -650,21 +738,62 @@ export const LOG = {
    * Вывод отладочного сообщения (синий цвет)
    * @param {string} text - Текст сообщения
    * @param {string} color - Цвет сообщения
+   * @param {boolean} [force=false] - Принудительный вывод, игнорируя подавление
    */
-  debug: (text, color = "blue") => {
-    console.debug(colorizeByText(text, color));
+  debug: (text, color = "blue", force = false) => {
+    if (typeof color === "boolean") {
+      force = color;
+      color = "blue";
+    }
+
+    const { isRepeat, count } = checkIfRepeat("debug", text);
+
+    if (!force && isRepeat && suppressionConfig.enabled) {
+      // Просто обновляем счетчик, не выводим
+      return;
+    }
+
+    if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+      const counterText = ` ${colorizeByText(`[×${count + 1}]`, "dim")}`;
+      console.debug(colorizeByText(text, color) + counterText);
+    } else {
+      console.debug(colorizeByText(text, color));
+    }
   },
 
   /**
    * Вывод информационного сообщения (обычный цвет)
    * @param {string} text - Текст сообщения
    * @param {string|null} color - Цвет сообщения
+   * @param {boolean} [force=false] - Принудительный вывод, игнорируя подавление
    */
-  info: (text, color = null) => {
+  info: (text, color = null, force = false) => {
+    if (typeof color === "boolean") {
+      force = color;
+      color = null;
+    }
+
+    const { isRepeat, count } = checkIfRepeat("info", text);
+
+    if (!force && isRepeat && suppressionConfig.enabled) {
+      return;
+    }
+
     if (!color) {
-      console.info(text);
+      if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+        console.info(`${text} ${colorizeByText(`[×${count + 1}]`, "dim")}`);
+      } else {
+        console.info(text);
+      }
     } else {
-      console.info(colorizeByText(text, color));
+      if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+        console.info(
+          colorizeByText(text, color) +
+            colorizeByText(` [×${count + 1}]`, "dim")
+        );
+      } else {
+        console.info(colorizeByText(text, color));
+      }
     }
   },
 
@@ -672,35 +801,136 @@ export const LOG = {
    * Вывод предупреждения (желтый цвет)
    * @param {string} text - Текст предупреждения
    * @param {string|null} color - Цвет предупреждения
+   * @param {boolean} [force=false] - Принудительный вывод, игнорируя подавление
    */
-  warn: (text, color = "yellow") => {
-    console.warn(colorizeByText(text, color));
+  warn: (text, color = "yellow", force = false) => {
+    if (typeof color === "boolean") {
+      force = color;
+      color = "yellow";
+    }
+    const { isRepeat, count } = checkIfRepeat("warn", text);
+
+    if (!force && isRepeat && suppressionConfig.enabled) {
+      // Просто обновляем счетчик, не выводим
+      return;
+    }
+
+    if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+      const counterText = ` ${colorizeByText(`[×${count + 1}]`, "dim")}`;
+      console.warn(colorizeByText(text, color) + counterText);
+    } else {
+      console.warn(colorizeByText(text, color));
+    }
   },
 
   /**
    * Вывод ошибки (красный цвет)
    * @param {string} text - Текст ошибки
    * @param {string|null} color - Цвет ошибки
+   * @param {boolean} [force=false] - Принудительный вывод, игнорируя подавление
    */
-  error: (text, color = "red") => {
-    console.error(colorizeByText(text, color));
+  error: (text, color = "red", force = false) => {
+    if (typeof color === "boolean") {
+      force = color;
+      color = "red";
+    }
+    const { isRepeat, count } = checkIfRepeat("error", text);
+
+    if (!force && isRepeat && suppressionConfig.enabled) {
+      // Просто обновляем счетчик, не выводим
+      return;
+    }
+
+    if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+      const counterText = ` ${colorizeByText(`[×${count + 1}]`, "dim")}`;
+      console.error(colorizeByText(text, color) + counterText);
+    } else {
+      console.error(colorizeByText(text, color));
+    }
   },
 
   /**
    * Вывод текста с произвольным цветом
    * @param {string} text - Текст для вывода
    * @param {string} color - Цветовой код (имя, HEX, RGB)
+   * @param {boolean} [force=false] - Принудительный вывод, игнорируя подавление
    */
-  print: (text, color) => {
-    console.log(colorizeByText(text, color));
+  print: (text, color, force = false) => {
+    if (typeof color === "boolean") {
+      force = color;
+      color = undefined;
+    }
+    const { isRepeat, count } = checkIfRepeat("print", text);
+
+    if (!force && isRepeat && suppressionConfig.enabled) {
+      // Просто обновляем счетчик, не выводим
+      return;
+    }
+
+    if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+      const counterText = ` ${colorizeByText(`[×${count + 1}]`, "dim")}`;
+      console.log(colorizeByText(text, color) + counterText);
+    } else {
+      console.log(colorizeByText(text, color));
+    }
   },
 
   /**
    * Расширенное форматирование с опциями
    * @param {string} text - Текст для форматирования
    * @param {Object} options - Опции форматирования
+   * @param {boolean} [force=false] - Принудительный вывод, игнорируя подавление
    */
-  custom: (text, options) => {
-    console.log(prepareCustomLog(text, options));
+  custom: (text, options, force = false) => {
+    const { isRepeat, count } = checkIfRepeat("custom", text);
+
+    if (!force && isRepeat && suppressionConfig.enabled) {
+      // Просто обновляем счетчик, не выводим
+      return;
+    }
+
+    if (isRepeat && count > 0 && suppressionConfig.showCounter) {
+      const counterText = ` ${colorizeByText(`[×${count + 1}]`, "dim")}`;
+      console.log(prepareCustomLog(text, options) + counterText);
+    } else {
+      console.log(prepareCustomLog(text, options));
+    }
+  },
+
+  /**
+   * Сброс истории повторяющихся логов
+   */
+  resetSuppression: () => {
+    Object.keys(lastLogs).forEach((key) => {
+      lastLogs[key] = { text: null, timestamp: 0 };
+    });
+    repeatCounters.clear();
+  },
+
+  /**
+   * Получить статистику повторений
+   * @returns {Object} Статистика
+   */
+  getSuppressionStats: () => {
+    return {
+      config: { ...suppressionConfig },
+      counters: Array.from(repeatCounters.entries()).map(([key, count]) => ({
+        key,
+        count,
+      })),
+    };
+  },
+  /**
+   * Включить подавление логов
+   */
+  enableSuppression: () => {
+    configureLogSuppression({ enabled: true });
+  },
+
+  /**
+   * Выключить подавление логов
+   */
+  disableSuppression: () => {
+    configureLogSuppression({ enabled: false });
   },
 };
